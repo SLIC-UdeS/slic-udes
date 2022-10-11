@@ -50,6 +50,50 @@ foreach ($issues_json['authors'] as $author => $info) {
     $gh_contributors[$author] = min($gh_contributors[$author], $info['first_contribution']);
 }
 
+$config = parse_ini_file('../config.ini');
+$conn = mysqli_connect($config['host'], $config['username'], $config['password'], $config['dbname'], $config['port']);
+// get stats for pipelines
+$sql = 'SELECT timestamp,
+                SUM(views) AS sum_total_views,
+                SUM(views_uniques) AS sum_total_views_uniques,
+                SUM(clones) AS sum_total_clones,
+                SUM(clones_uniques) AS sum_total_clones_uniques FROM github_traffic_stats
+            INNER JOIN nfcore_pipelines ON github_traffic_stats.pipeline_id = nfcore_pipelines.id GROUP BY timestamp ORDER BY timestamp ASC';
+$pipeline_metrics = [];
+if ($result = mysqli_query($conn, $sql)) {
+    if (mysqli_num_rows($result) > 0) {
+        $pipeline_metrics = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        // Free result set
+        mysqli_free_result($result);
+    }
+}
+// get all repos
+$sql = 'SELECT * FROM nfcore_pipelines';
+$gh_repos = [];
+if ($result = mysqli_query($conn, $sql)) {
+    if (mysqli_num_rows($result) > 0) {
+        $gh_repos = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        // Free result set
+        mysqli_free_result($result);
+    }
+}
+// get unique contributor names from github_contrib_stats table from the mysql database
+$sql = 'SELECT DISTINCT author, avatar_url, SUM(week_commits) AS total_sum_commits
+FROM github_contrib_stats GROUP BY author,avatar_url  ORDER BY total_sum_commits DESC';
+$gh_contributors_db = [];
+if ($result = mysqli_query($conn, $sql)) {
+    if (mysqli_num_rows($result) > 0) {
+        $gh_contributors_db = mysqli_fetch_all($result, MYSQLI_ASSOC);
+        // Free result set
+        mysqli_free_result($result);
+    }
+} else {
+    echo "ERROR: Could not able to execute $sql. " . mysqli_error($conn);
+}
+// get maximum total_sum_commits from $gh_contributors_db
+$max_total_sum_commits = max(array_column($gh_contributors_db, 'total_sum_commits'));
+$total_sum_commits = array_sum(array_column($gh_contributors_db, 'total_sum_commits'));
+
 # echo '<pre>'.print_r($stats, true).'</pre>';
 
 // This is horrible, I know sorry. I'm in a rush :(
@@ -124,15 +168,6 @@ foreach (['pipelines', 'core_repos'] as $repo_type):
                 }
             }
             $stats_total[$repo_type][$key . '_total'] += $repo->{$key . '_total'};
-        }
-
-        $total_commits = 0;
-        foreach ($repo->contributors as $contributor) {
-            $gh_username = $contributor->author->login;
-            $stats_total[$repo_type]['unique_committers'][$gh_username] = 0;
-            $stats_total['total']['unique_committers'][$gh_username] = 0;
-            $stats_total[$repo_type]['total_commits'] += $contributor->total;
-            $total_commits += $contributor->total;
         }
         ob_start();
         ?>
@@ -359,8 +394,7 @@ foreach (array_keys($stats_total['pipelines']) as $akey) {
 <div class="card-group text-center stats_keynumbers">
   <div class="card bg-body">
     <div class="card-body">
-      <p class="card-text display-4"><?php echo count(get_object_vars($stats_json->pipelines)) +
-          count(get_object_vars($stats_json->core_repos)); ?></p>
+      <p class="card-text display-4"><?php echo count($gh_repos); ?></p>
       <p class="card-text text-muted">Repositories</p>
     </div>
     <div class="bg-icon"><i class="far fa-folder"></i></div>
@@ -376,9 +410,7 @@ foreach (array_keys($stats_total['pipelines']) as $akey) {
   </div>
   <div class="card bg-body">
     <div class="card-body">
-      <p class="card-text display-4"><?php echo round_nicely(
-          $stats_total['pipelines']['total_commits'] + $stats_total['core_repos']['total_commits'],
-      ); ?></p>
+      <p class="card-text display-4"><?php echo round_nicely($total_sum_commits); ?></p>
       <p class="card-text text-muted">Commits</p>
     </div>
     <div class="bg-icon"><i class="far fa-file-code"></i></div>
@@ -418,8 +450,8 @@ Please note that these numbers come with some caveats <a href="#caveats">[ see m
         ); ?></span>
         <br>Clones since <?php echo date(
             'F Y',
-            min($stats_total['pipelines']['clones_count_since'], $stats_total['core_repos']['clones_count_since']),
-        ); ?>
+            strtotime($pipeline_metrics[0]['timestamp'])
+        );  ?>
       </div>
       <div class="col-6" data-bs-toggle="tooltip" title="Note: Unique per repository. Will double-count the same person cloning two different repositories.">
         <span class="text-body lead"><?php echo round_nicely(
@@ -427,7 +459,7 @@ Please note that these numbers come with some caveats <a href="#caveats">[ see m
         ); ?></span>
         <br>Unique cloners since <?php echo date(
             'F Y',
-            min($stats_total['pipelines']['clones_uniques_since'], $stats_total['core_repos']['clones_uniques_since']),
+            strtotime($pipeline_metrics[0]['timestamp'])
         ); ?>
       </div>
     </div>
@@ -449,20 +481,20 @@ Please note that these numbers come with some caveats <a href="#caveats">[ see m
     <div class="row align-items-center">
       <div class="col-6 border-end border-secondary">
         <span class="text-body lead"><?php echo round_nicely(
-            $stats_total['pipelines']['views_count_total'] + $stats_total['core_repos']['views_count_total'],
+            array_sum(array_column($pipeline_metrics,'sum_total_views'))
         ); ?></span>
         <br>Views since <?php echo date(
             'F Y',
-            min($stats_total['pipelines']['views_count_since'], $stats_total['core_repos']['views_count_since']),
+            strtotime($pipeline_metrics[0]['timestamp'])
         ); ?>
       </div>
       <div class="col-6" data-bs-toggle="tooltip" title="Note: Unique per repository. Will double-count the same person viewing two different repositories.">
         <span class="text-body lead"><?php echo round_nicely(
-            $stats_total['pipelines']['views_uniques_total'] + $stats_total['core_repos']['views_uniques_total'],
+            array_sum(array_column($pipeline_metrics,'sum_total_views_uniques'))
         ); ?></span>
         <br>Unique visitors since <?php echo date(
             'F Y',
-            min($stats_total['pipelines']['views_uniques_since'], $stats_total['core_repos']['views_uniques_since']),
+            strtotime($pipeline_metrics[0]['timestamp'])
         ); ?>
       </div>
     </div>
@@ -545,82 +577,86 @@ A list of these repositories can be found <a href="#core_repos">below</a>.</p>
 
 <table class="table table-sm mt-5">
   <tbody>
-<?php
-$stats_json_fn = dirname(dirname(__FILE__)) . '/nfcore_stats.json';
-$stats_json = json_decode(file_get_contents($stats_json_fn));
-$contributors = [];
-$contribution_counts = [];
-$contribution_counts_bytype = [];
-$top_repos = [];
-foreach (['pipelines', 'core_repos'] as $repo_type) {
-    foreach ($stats_json->{$repo_type} as $repo_name => $repo) {
-        foreach ($repo->contributors as $contributor) {
-            $login = $contributor->author->login;
-            $contributors[$login] = $contributor->author;
-            if (!isset($contribution_counts[$login])) {
-                $contribution_counts[$login] = 0;
-                $contribution_counts_bytype[$login] = ['pipelines' => 0, 'core_repos' => 0];
-                $top_repos[$login] = [$repo_name, $contributor->total];
-            }
-            $contribution_counts[$login] += $contributor->total;
-            $contribution_counts_bytype[$login][$repo_type] += $contributor->total;
-            if ($top_repos[$login][1] < $contributor->total) {
-                $top_repos[$login] = [$repo_name, $contributor->total];
-            }
+<?php //loop through gh_contributors_db and get their contribution counts
+foreach ($gh_contributors_db as $contributor) {
+    $sql =
+        "SELECT name,pipeline_type, pipeline_id, SUM(week_commits) AS sum_week_commits
+    FROM github_contrib_stats
+    INNER JOIN nfcore_pipelines ON github_contrib_stats.pipeline_id = nfcore_pipelines.id
+    WHERE author = '" .
+        $contributor['author'] .
+        "'
+    GROUP BY pipeline_id ORDER BY sum_week_commits DESC";
+    if ($result = mysqli_query($conn, $sql)) {
+        if (mysqli_num_rows($result) > 0) {
+            $contributor_stats = mysqli_fetch_all($result, MYSQLI_ASSOC);
+            // Free result set
+            mysqli_free_result($result);
         }
+    } else {
+        echo 'No records for ' . $contributor['author'] . ' found.' . mysqli_error($conn);
     }
-}
-arsort($contribution_counts);
-$max_count = max($contribution_counts);
-foreach ($contribution_counts as $login => $count) {
-    $author = $contributors[$login];
-    $pipeline_commits = $contribution_counts_bytype[$login]['pipelines'];
-    $core_repo_commits = $contribution_counts_bytype[$login]['core_repos'];
-    $pct_pipeline = ($pipeline_commits / $max_count) * 100;
-    $pct_core = ($core_repo_commits / $max_count) * 100;
+    $sum_pipeline_commits = array_sum(
+        array_column(
+            array_filter($contributor_stats, function ($metric) {
+                return $metric['pipeline_type'] == 'pipelines';
+            }),
+            'sum_week_commits',
+        ),
+    );
+    $sum_core_repo_commits = array_sum(
+        array_column(
+            array_filter($contributor_stats, function ($metric) {
+                return $metric['pipeline_type'] == 'core_repos';
+            }),
+            'sum_week_commits',
+        ),
+    );
+    $pct_pipeline = ($sum_pipeline_commits / $max_total_sum_commits) * 100;
+    $pct_core = ($sum_core_repo_commits / $max_total_sum_commits) * 100;
     echo '<tr>
-      <td width="10%" class="pe-5">
-        <a style="white-space: nowrap;" href="' .
-        $author->html_url .
+        <td width="10%" class="pe-5">
+        <a style="white-space: nowrap;"href="https://github.com/' .
+        $contributor['author'] .
         '" target="_blank"><img src="' .
-        $author->avatar_url .
+        $contributor['avatar_url'] .
         '" class="border rounded-circle me-1 mb-1" width="50" height="50"> @' .
-        $author->login .
+        $contributor['author'] .
         '</a>
-      </td>
-      <td class="align-middle">
+        </td>
+        <td class="align-middle">
         <div class="progress" title="Pipelines: ' .
-        $pipeline_commits .
+        $sum_pipeline_commits .
         ' commits<br>Core repos: ' .
-        $core_repo_commits .
+        $sum_core_repo_commits .
+        ' commits<br>Overall: ' .
+        ($sum_pipeline_commits + $sum_core_repo_commits) .
         ' commits" data-bs-toggle="tooltip" data-html="true">
-          <div class="progress-bar bg-success" role="progressbar" style="width: ' .
+        <div class="progress-bar bg-success" role="progressbar" style="width: ' .
         $pct_pipeline .
         '%">' .
-        ($pct_pipeline > 5 ? $pipeline_commits : '') .
+        ($pct_pipeline > 5 ? $sum_pipeline_commits : '') .
         '</div>
-          <div class="progress-bar bg-warning" role="progressbar" style="width: ' .
+                <div class="progress-bar bg-warning" role="progressbar" style="width: ' .
         $pct_core .
         '%">' .
-        ($pct_core > 5 ? $core_repo_commits : '') .
+        ($pct_core > 5 ? $sum_core_repo_commits : '') .
         '</div>
-        </div>
-      </td>
-      <td class="align-middle ps-5 small  font-monospace d-none d-md-table-cell" width="10%">
+            </div>
+        </td>
+        <td class="align-middle ps-5 small  font-monospace d-none d-md-table-cell" width="10%">
         <a href="/' .
-        $top_repos[$login][0] .
+        $contributor_stats[0]['name'] .
         '" title="Repo with most commits (' .
-        $top_repos[$login][1] .
+        $contributor_stats[0]['sum_week_commits'] .
         ' commits)" data-bs-toggle="tooltip">' .
-        $top_repos[$login][0] .
-        ' 
-        <span class="badge rounded-pill bg-secondary float-end">' .
-        $top_repos[$login][1] .
+        $contributor_stats[0]['name'] .
+        '<span class="badge rounded-pill bg-secondary float-end">' .
+        $contributor_stats[0]['sum_week_commits'] .
         '</span></a>
-      </td>
+        </td>
     </tr>';
-}
-?>
+} ?>
 </tbody>
 </table>
 
@@ -642,7 +678,14 @@ foreach ($contribution_counts as $login => $count) {
 
 <?php // The pipeline and core repo tables are the same
 
-foreach (['pipelines', 'core_repos'] as $repo_type): ?>
+foreach (['pipelines', 'core_repos'] as $repo_type):
+
+$repo_stats =
+            array_filter($gh_repos, function ($metric) {
+                global $repo_type;
+                return $metric['pipeline_type'] == $repo_type;
+            });
+?>
 
 <h2 class="mt-0" id="<?php echo $repo_type; ?>"><?php echo ucfirst(
     str_replace('_', ' ', $repo_type),
@@ -651,12 +694,13 @@ foreach (['pipelines', 'core_repos'] as $repo_type): ?>
   <i class="far fa-hand-point-right"></i>
   Click a row to see detailed statistics for that repository.
 </p>
+<?php
 
-
+?>
 <div class="table-responsive">
-  <table class="table table-hover table-sm small pipeline-stats-table">
+<table class="table table-hover table-sm small pipeline-stats-table">
     <thead class="">
-      <tr>
+    <tr>
         <th>&nbsp;</th>
         <th>Name</th>
         <th>Age</th>
@@ -670,31 +714,101 @@ foreach (['pipelines', 'core_repos'] as $repo_type): ?>
         <th class="">Unique cloners</th>
         <th class="">Repo views</th>
         <th class="">Unique repo visitors</th>
-      </tr>
+    </tr>
     </thead>
-    
+
     <tbody>
-      <tr class="text-bold">
+
+    <!-- <tr class="text-bold">
         <th>&nbsp;</th>
         <th>Total:</th>
-        <th class="font-weight-light"><?php echo count($pipelines); ?> pipelines</th>
+        <th class="font-weight-light"><?php echo count($repo_stats); ?> pipelines</th>
         <?php if ($repo_type == 'pipelines'): ?><th class="font-weight-light "><?php echo $stats_total[$repo_type][
     'releases'
 ]; ?></th><?php endif; ?>
-        <th class="font-weight-light "><?php echo count($stats_total[$repo_type]['unique_committers']); ?> unique</th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['total_commits']; ?></th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['stargazers']; ?></th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['watchers']; ?></th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['network_forks_count']; ?></th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['clones_count_total']; ?></th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['clones_uniques_total']; ?></th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['views_count_total']; ?></th>
-        <th class="font-weight-light "><?php echo $stats_total[$repo_type]['views_uniques_total']; ?></th>
-      </tr>
-    <?php echo implode($trows[$repo_type]); ?>
+            <th class="font-weight-light "><?php echo count($stats_total[$repo_type]['unique_committers']); ?> unique</th>
+            <th class="font-weight-light "><?php echo $stats_total[$repo_type]['total_commits']; ?></th>
+            <th class="font-weight-light "><?php echo array_sum(array_column($repo_stats,'stargazers')); ?></th>
+            <th class="font-weight-light "><?php echo array_sum(array_column($repo_stats,'watchers')); ?></th>
+            <th class="font-weight-light "><?php echo array_sum(array_column($repo_stats,'network_forks_count')); ?></th>
+            <th class="font-weight-light "><?php echo array_sum(array_column($repo_stats,'clones_count_total')); ?></th>
+            <th class="font-weight-light "><?php echo array_sum(array_column($repo_stats,'clones_uniques_total')); ?></th>
+            <th class="font-weight-light "><?php echo array_sum(array_column($repo_stats,'views_count_total')); ?></th>
+            <th class="font-weight-light "><?php echo array_sum(array_column($repo_stats,'views_uniques_total')); ?></th>
+    </tr> -->
+    <?php foreach ($repo_stats as $repo_stat):
+        // get summed up stats from github_traffic_stats table for current pipeline
+        $sql =
+            "SELECT SUM(views) AS sum_views,
+                    SUM(views_uniques) AS sum_views_uniques,
+                    SUM(clones) AS sum_clones,
+                    SUM(clones_uniques) AS sum_clones_uniques
+            FROM github_traffic_stats WHERE pipeline_id = '" . $repo_stat['id'] . "' GROUP BY pipeline_id";
+        $traffic_stats = [];
+        if ($result = mysqli_query($conn, $sql)) {
+            if (mysqli_num_rows($result) > 0) {
+                $traffic_stats = mysqli_fetch_all($result, MYSQLI_ASSOC);
+                // Free result set
+                mysqli_free_result($result);
+            }
+        }else {
+            echo "ERROR: Could not able to execute $sql. " . mysqli_error($conn);
+        }
+        // get contributor stats for current pipeline
+        $sql =
+            "SELECT COUNT(author) AS num_contributors, SUM(week_commits) AS sum_week_commits FROM github_contrib_stats WHERE pipeline_id = '" .
+            $repo_stat['id'] . "' GROUP BY pipeline_id";
+        $contributor_stats = [];
+        if ($result = mysqli_query($conn, $sql)) {
+            if (mysqli_num_rows($result) > 0) {
+                $contributor_stats = mysqli_fetch_all($result, MYSQLI_ASSOC);
+                // Free result set
+                mysqli_free_result($result);
+            }
+        }else {
+            echo "ERROR: Could not able to execute $sql. " . mysqli_error($conn);
+        }
+        ?>
+        <tr>
+    <td><?php
+        if ($repo_stat['archived']) {
+            echo '<small class="status-icon text-warning ms-2 fas fa-archive" data-bs-toggle="tooltip" aria-hidden="true" title="This repo has been archived and is no longer being maintained."></small>';
+        } elseif ($repo_type == 'pipelines') {
+            // Edge case where a new pipeline is added but stats hasn't rerun yet
+            if (!isset($repo_stat['num_releases'])) {
+                $repo_stat['num_releases'] = 0;
+            }
+            if ($repo_stat['last_release_date'] != null) {
+                echo '<small class="status-icon text-success ms-2 fas fa-check" data-bs-toggle="tooltip" aria-hidden="true" title="This pipeline is released, tested and good to go."></small>';
+            } else {
+                echo '<small class="status-icon text-danger ms-2 fas fa-wrench" data-bs-toggle="tooltip" aria-hidden="true" title="This pipeline is under active development. Once released on GitHub, it will be production-ready."></small>';
+            }
+        }
+        $alink = '<a href="' . $repo_stat['html_url'] . '" target="_blank">';
+        if ($repo_type == 'pipelines') {
+            $alink = '<a href="/' . $repo_stat['name'] . '/releases_stats">';
+        }
+        ?></td>
+        <td><?php echo $alink . '<span class="d-none d-lg-inline">nf-core/</span>' . $repo_stat['name'] . '</a>'; ?></td>
+        <td data-text="<?php echo strtotime($repo_stat['gh_created_at']); ?>"><?php echo time_ago(
+        $repo_stat['gh_created_at'],
+        false,
+    ); ?></td>
+        <?php if ($repo_type == 'pipelines'): ?><td class=""><?php echo $repo->num_releases; ?></td><?php endif; ?>
+        <td class=""><?php echo $contributor_stats[0]['num_contributors']; ?></td>
+        <td class=""><?php echo $contributor_stats[0]['sum_week_commits']; ?></td>
+        <td class=""><?php echo $repo_stat['stargazers_count']; ?></td>
+        <td class=""><?php echo $repo_stat['watchers_count']; ?></td>
+        <td class=""><?php echo $repo_stat['forks_count']; ?></td>
+        <td class=""><?php echo $traffic_stats[0]['sum_clones']; ?></td>
+        <td class=""><?php echo $traffic_stats[0]['sum_clones_uniques']; ?></td>
+        <td class=""><?php echo $traffic_stats[0]['sum_views']; ?></td>
+        <td class=""><?php echo $traffic_stats[0]['sum_views_uniques']; ?></td>
+    </tr>
+    <?php endforeach; ?>
     </tbody>
     <tfoot class="">
-      <tr>
+    <tr>
         <th>&nbsp;</th>
         <th>Name</th>
         <th>Age</th>
@@ -708,9 +822,9 @@ foreach (['pipelines', 'core_repos'] as $repo_type): ?>
         <th class="">Unique cloners</th>
         <th class="">Repo views</th>
         <th class="">Unique repo visitors</th>
-      </tr>
+    </tr>
     </tfoot>
-  </table>
+    </table>
 </div>
 
 <?php endforeach; ?>
@@ -1401,14 +1515,14 @@ $(function(){
         yAxisID: 'y-axis-count',
         data: [
           <?php
-          ksort($stats_total_allrepos['clones_count']);
-          foreach ($stats_total_allrepos['clones_count'] as $timestamp => $count) {
-              $timestamp = strtotime($timestamp);
+          foreach($pipeline_metrics as $metric){
+            $timestamp = strtotime($metric['timestamp']);
               // Skip zeros (anything before 2010)
-              if ($timestamp < 1262304000) {
+              if ($timestamp < 1262304000 || is_null($metric['sum_total_clones'])) {
                   continue;
               }
-              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $count . ' },' . "\n\t\t\t";
+              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $metric['sum_total_clones'] . ' },' . "\n\t\t\t";
+
           }
           ?>
         ]
@@ -1422,14 +1536,15 @@ $(function(){
         yAxisID: 'y-axis-uniques',
         data: [
           <?php
-          ksort($stats_total_allrepos['clones_uniques']);
-          foreach ($stats_total_allrepos['clones_uniques'] as $timestamp => $count) {
-              $timestamp = strtotime($timestamp);
+
+          foreach($pipeline_metrics as $metric){
+            $timestamp = strtotime($metric['timestamp']);
               // Skip zeros (anything before 2010)
-              if ($timestamp < 1262304000) {
+              if ($timestamp < 1262304000 || is_null($metric['sum_total_clones_uniques'])) {
                   continue;
               }
-              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $count . ' },' . "\n\t\t\t";
+              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $metric['sum_total_clones_uniques'] . ' },' . "\n\t\t\t";
+
           }
           ?>
         ]
@@ -1480,14 +1595,14 @@ $(function(){
         yAxisID: 'y-axis-count',
         data: [
           <?php
-          ksort($stats_total_allrepos['views_count']);
-          foreach ($stats_total_allrepos['views_count'] as $timestamp => $count) {
-              $timestamp = strtotime($timestamp);
+          foreach($pipeline_metrics as $metric){
+            $timestamp = strtotime($metric['timestamp']);
               // Skip zeros (anything before 2010)
-              if ($timestamp < 1262304000) {
+              if ($timestamp < 1262304000 || is_null($metric['sum_total_views'])) {
                   continue;
               }
-              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $count . ' },' . "\n\t\t\t";
+              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $metric['sum_total_views'] . ' },' . "\n\t\t\t";
+
           }
           ?>
         ]
@@ -1501,14 +1616,14 @@ $(function(){
         yAxisID: 'y-axis-uniques',
         data: [
           <?php
-          ksort($stats_total_allrepos['views_uniques']);
-          foreach ($stats_total_allrepos['views_uniques'] as $timestamp => $count) {
-              $timestamp = strtotime($timestamp);
+          foreach($pipeline_metrics as $metric){
+            $timestamp = strtotime($metric['timestamp']);
               // Skip zeros (anything before 2010)
-              if ($timestamp < 1262304000) {
+              if ($timestamp < 1262304000 || is_null($metric['sum_total_views_uniques'])) {
                   continue;
               }
-              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $count . ' },' . "\n\t\t\t";
+              echo '{ x: "' . date('Y-m-d', $timestamp) . '", y: ' . $metric['sum_total_views_uniques'] . ' },' . "\n\t\t\t";
+
           }
           ?>
         ]
