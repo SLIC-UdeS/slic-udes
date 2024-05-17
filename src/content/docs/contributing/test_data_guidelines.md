@@ -57,10 +57,10 @@ In contrast, if your module requires many tests, steps, or heavy CPU usage, you 
 
 11. The test data pull request requires a review to be merged.
 
-12. Once you've had your pull request merged in into `nf-core/test-datasets`, make another PR into [nf-core/modules](https://github.com/nf-core/modules), to add your file as a new entry to the [`modules/tests/config/test_data.config`](https://github.com/nf-core/modules/blob/master/tests/config/test_data.config).
+12. Once you've had your pull request merged in into `nf-core/test-datasets`, you are good to go and you can use refer to the newly uploaded file(s) for your test(s). Use `params.modules_testdata_base_path` to point to the test data directory in your module, and append to it the path to the file(s) you need. an example using the `fasta` file from `sarscov2`:
 
-    - This only applies field-specific collections, `delete_me/` files are excluded from this, and raw github URLs should be used in tests.
-    - The 'key' for each URL should follow the style of the full file name with extensions but with underscores rather than full-stops e.g. `genome.fa.gz` would become `genome_fa_gz`.
+    - `file(params.modules_testdata_base_path + 'genomics/sarscov2/genome/genome.fasta', checkIfExists: true)`
+    - Note the file string corresponds to the directory structure of the modules repository.
 
 ### Field specific guidance
 
