@@ -22,7 +22,7 @@ working_dir: tmp
 Please see the [nf-core documentation](/docs/tutorials/adding_a_pipeline/overview) for a full walkthrough of how to create a new nf-core workflow.
 
 > [!TIP]
-> As command documentation says, remember to come and discuss your idea for a pipeline as early as possible!
+> As the command documentation says, remember to come and discuss your idea for a pipeline as early as possible!
 > See the [documentation](/docs/tutorials/adding_a_pipeline/move_to_nf-core_org) for instructions.
 
 Note that if the required arguments for `nf-core pipelines create` are not given, it will start a user interface to create the pipeline interactively. If you prefer, you can supply them as command line arguments. See `nf-core pipelines create --help` for more information.
@@ -30,7 +30,7 @@ Note that if the required arguments for `nf-core pipelines create` are not given
 ## Customization
 
 The `nf-core pipelines create` command comes with a number of options that allow you to customize the creation of a pipeline if you intend to not publish it as an
-nf-core pipeline. This can be done in two ways: by using the graphic interface, or by supplying a `template.yml` file using the `--template-yaml <file>` option.
+nf-core pipeline. This can be done in two ways: by using the graphical interface, or by supplying a `template.yml` file using the `--template-yaml <file>` option.
 Both options allow you to specify a custom pipeline prefix to use instead of the common `nf-core`, as well as selecting parts of the template to be excluded during pipeline creation.
 The interface app will guide you through the pipeline creation process.
 
@@ -69,7 +69,7 @@ An example of a `template.yml` file is shown below.
 name: coolpipe
 description: A cool pipeline
 author: me
-otg: myorg
+org: myorg
 skip_features:
   - github
   - ci
