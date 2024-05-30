@@ -19,7 +19,6 @@ working_dir: tmp
 
 ![` nf-core pipelines create -n nextbigthing -d "This pipeline analyses data from the next big omics technique" -a "Big Steve"`](/images/tools/nf-core-create.svg)
 
-
 Please see the [nf-core documentation](/docs/tutorials/adding_a_pipeline/overview) for a full walkthrough of how to create a new nf-core workflow.
 
 > [!TIP]
